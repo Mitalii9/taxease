@@ -1,0 +1,71 @@
+spring:
+  application:
+    name: taxease
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/taxease
+    username: postgres
+    password: Mitali@0903
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    admin:
+      fail-fast: false
+    listener:
+      missing-topics-fatal: false
+    consumer:
+      group-id: taxease-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.taxease.kafka.event"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+taxease:
+  jwt:
+    # Override JWT_SECRET in production — must be a Base64-encoded key of at least 256 bits
+    secret: ${JWT_SECRET:dGF4ZWFzZS1zdXBlci1zZWNyZXQta2V5LWZvci1qd3Q=}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}   # 24 hours
+
+logging:
+  level:
+    com.taxease: DEBUG
+    org.springframework.security: INFO

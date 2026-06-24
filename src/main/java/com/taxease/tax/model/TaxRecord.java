@@ -1,5 +1,6 @@
 package com.taxease.tax.model;
 
+import com.taxease.tax.model.enums.Regime;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -21,42 +22,31 @@ public class TaxRecord {
     @Column(nullable = false)
     private String userId;
 
-    @Column(nullable = false)
-    private Integer taxYear;
-
-    @Column(precision = 15, scale = 2)
-    private BigDecimal grossIncome;
-
-    @Column(precision = 15, scale = 2)
-    private BigDecimal taxableIncome;
-
-    @Column(precision = 15, scale = 2)
-    private BigDecimal taxLiability;
-
-    @Column(precision = 15, scale = 2)
-    private BigDecimal taxPaid;
-
-    @Column(precision = 15, scale = 2)
-    private BigDecimal refundOrDue;
+    @Column(nullable = false, precision = 15, scale = 2)
+    private BigDecimal grossSalary;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private TaxStatus status;
+    private Regime regimeChosen;
 
-    @Column(nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    @Column(nullable = false, precision = 15, scale = 2)
+    private BigDecimal taxOldRegime;
 
-    private LocalDateTime updatedAt;
+    @Column(nullable = false, precision = 15, scale = 2)
+    private BigDecimal taxNewRegime;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Regime recommendedRegime;
+
+    @Column(nullable = false, precision = 15, scale = 2)
+    private BigDecimal savings;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime calculatedAt;
 
     @PrePersist
     void onCreate() {
-        createdAt = LocalDateTime.now();
-        updatedAt = LocalDateTime.now();
-        if (status == null) status = TaxStatus.DRAFT;
-    }
-
-    @PreUpdate
-    void onUpdate() {
-        updatedAt = LocalDateTime.now();
+        calculatedAt = LocalDateTime.now();
     }
 }

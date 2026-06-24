@@ -1,10 +1,13 @@
 package com.taxease.tax.service;
 
-import com.taxease.tax.dto.CreateTaxRecordRequest;
+import com.taxease.tax.dto.TaxCalculationRequest;
+import com.taxease.tax.dto.TaxCalculationResponse;
 import com.taxease.tax.dto.TaxRecordDTO;
 import com.taxease.tax.model.TaxRecord;
-import com.taxease.tax.model.TaxStatus;
+import com.taxease.tax.model.enums.Regime;
 import com.taxease.tax.repository.TaxRecordRepository;
+import com.taxease.tax.service.NewRegimeCalculator.NewRegimeResult;
+import com.taxease.tax.service.OldRegimeCalculator.OldRegimeResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,69 +21,70 @@ import java.util.List;
 @Transactional(readOnly = true)
 public class TaxService {
 
+    private final OldRegimeCalculator oldRegimeCalculator;
+    private final NewRegimeCalculator newRegimeCalculator;
     private final TaxRecordRepository taxRecordRepository;
 
-    public List<TaxRecordDTO> findByUser(String userId) {
-        return taxRecordRepository.findByUserId(userId).stream().map(this::toDTO).toList();
-    }
-
-    public TaxRecordDTO findById(String id) {
-        return taxRecordRepository.findById(id).map(this::toDTO)
-                .orElseThrow(() -> new RuntimeException("Tax record not found: " + id));
-    }
-
     @Transactional
-    public TaxRecordDTO create(CreateTaxRecordRequest request) {
-        BigDecimal taxableIncome = calculateTaxableIncome(request.getGrossIncome());
-        BigDecimal taxLiability = calculateTaxLiability(taxableIncome);
-        BigDecimal taxPaid = request.getTaxPaid() != null ? request.getTaxPaid() : BigDecimal.ZERO;
-        BigDecimal refundOrDue = taxPaid.subtract(taxLiability);
+    public TaxCalculationResponse calculate(TaxCalculationRequest request, String userId) {
+        OldRegimeResult oldResult = oldRegimeCalculator.calculate(request);
+        NewRegimeResult newResult = newRegimeCalculator.calculate(request.getGrossSalary());
+
+        Regime recommended = oldResult.taxAmount().compareTo(newResult.taxAmount()) <= 0
+                ? Regime.OLD : Regime.NEW;
+
+        BigDecimal savings = oldResult.taxAmount().subtract(newResult.taxAmount())
+                .abs().setScale(2, RoundingMode.HALF_UP);
 
         TaxRecord record = TaxRecord.builder()
-                .userId(request.getUserId())
-                .taxYear(request.getTaxYear())
-                .grossIncome(request.getGrossIncome())
-                .taxableIncome(taxableIncome)
-                .taxLiability(taxLiability)
-                .taxPaid(taxPaid)
-                .refundOrDue(refundOrDue)
-                .status(TaxStatus.DRAFT)
+                .userId(userId)
+                .grossSalary(request.getGrossSalary())
+                .regimeChosen(recommended)
+                .taxOldRegime(oldResult.taxAmount())
+                .taxNewRegime(newResult.taxAmount())
+                .recommendedRegime(recommended)
+                .savings(savings)
+                .build();
+        taxRecordRepository.save(record);
+
+        TaxCalculationResponse.DeductionBreakdown breakdown = TaxCalculationResponse.DeductionBreakdown.builder()
+                .standardDeductionOld(oldResult.standardDeduction())
+                .hraExemption(oldResult.hraExemption())
+                .deduction80C(oldResult.deduction80C())
+                .deduction80D(oldResult.deduction80D())
+                .homeLoanInterestSec24(oldResult.homeLoanInterest())
+                .totalOldRegimeDeductions(oldResult.totalDeductions())
+                .taxableIncomeOldRegime(oldResult.taxableIncome())
+                .standardDeductionNew(newResult.standardDeduction())
+                .taxableIncomeNewRegime(newResult.taxableIncome())
                 .build();
 
-        return toDTO(taxRecordRepository.save(record));
+        return TaxCalculationResponse.builder()
+                .taxOldRegime(oldResult.taxAmount())
+                .taxNewRegime(newResult.taxAmount())
+                .recommendedRegime(recommended)
+                .savings(savings)
+                .deductions(breakdown)
+                .build();
     }
 
-    @Transactional
-    public TaxRecordDTO updateStatus(String id, TaxStatus status) {
-        TaxRecord record = taxRecordRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Tax record not found: " + id));
-        record.setStatus(status);
-        return toDTO(taxRecordRepository.save(record));
-    }
-
-    private BigDecimal calculateTaxableIncome(BigDecimal grossIncome) {
-        // placeholder — real logic will apply deductions
-        return grossIncome.multiply(BigDecimal.valueOf(0.85)).setScale(2, RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal calculateTaxLiability(BigDecimal taxableIncome) {
-        // placeholder — real logic will apply slabs
-        return taxableIncome.multiply(BigDecimal.valueOf(0.20)).setScale(2, RoundingMode.HALF_UP);
+    public List<TaxRecordDTO> getHistory(String userId) {
+        return taxRecordRepository.findByUserId(userId).stream()
+                .map(this::toDTO)
+                .toList();
     }
 
     private TaxRecordDTO toDTO(TaxRecord r) {
         return TaxRecordDTO.builder()
                 .id(r.getId())
                 .userId(r.getUserId())
-                .taxYear(r.getTaxYear())
-                .grossIncome(r.getGrossIncome())
-                .taxableIncome(r.getTaxableIncome())
-                .taxLiability(r.getTaxLiability())
-                .taxPaid(r.getTaxPaid())
-                .refundOrDue(r.getRefundOrDue())
-                .status(r.getStatus())
-                .createdAt(r.getCreatedAt())
-                .updatedAt(r.getUpdatedAt())
+                .grossSalary(r.getGrossSalary())
+                .regimeChosen(r.getRegimeChosen())
+                .taxOldRegime(r.getTaxOldRegime())
+                .taxNewRegime(r.getTaxNewRegime())
+                .recommendedRegime(r.getRecommendedRegime())
+                .savings(r.getSavings())
+                .calculatedAt(r.getCalculatedAt())
                 .build();
     }
 }

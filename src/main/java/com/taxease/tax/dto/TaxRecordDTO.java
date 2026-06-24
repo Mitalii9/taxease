@@ -1,6 +1,6 @@
 package com.taxease.tax.dto;
 
-import com.taxease.tax.model.TaxStatus;
+import com.taxease.tax.model.enums.Regime;
 import lombok.Builder;
 import lombok.Data;
 
@@ -12,13 +12,11 @@ import java.time.LocalDateTime;
 public class TaxRecordDTO {
     private String id;
     private String userId;
-    private Integer taxYear;
-    private BigDecimal grossIncome;
-    private BigDecimal taxableIncome;
-    private BigDecimal taxLiability;
-    private BigDecimal taxPaid;
-    private BigDecimal refundOrDue;
-    private TaxStatus status;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
+    private BigDecimal grossSalary;
+    private Regime regimeChosen;
+    private BigDecimal taxOldRegime;
+    private BigDecimal taxNewRegime;
+    private Regime recommendedRegime;
+    private BigDecimal savings;
+    private LocalDateTime calculatedAt;
 }

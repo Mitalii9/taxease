@@ -1,15 +1,16 @@
 package com.taxease.tax.controller;
 
-import com.taxease.tax.dto.CreateTaxRecordRequest;
+import com.taxease.tax.dto.TaxCalculationRequest;
+import com.taxease.tax.dto.TaxCalculationResponse;
 import com.taxease.tax.dto.TaxRecordDTO;
-import com.taxease.tax.model.TaxStatus;
 import com.taxease.tax.service.TaxService;
+import com.taxease.user.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -17,34 +18,24 @@ import java.util.List;
 @RestController
 @RequestMapping("/tax")
 @RequiredArgsConstructor
-@Tag(name = "Tax", description = "Tax record management endpoints")
+@Tag(name = "Tax", description = "Indian income tax calculation endpoints (FY 2025-26)")
 public class TaxController {
 
     private final TaxService taxService;
+    private final UserService userService;
 
-    @GetMapping("/user/{userId}")
-    @Operation(summary = "Get all tax records for a user")
-    public ResponseEntity<List<TaxRecordDTO>> findByUser(@PathVariable String userId) {
-        return ResponseEntity.ok(taxService.findByUser(userId));
+    @PostMapping("/calculate")
+    @Operation(summary = "Calculate income tax under old and new regime for FY 2025-26")
+    public ResponseEntity<TaxCalculationResponse> calculate(
+            @Valid @RequestBody TaxCalculationRequest request) {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        String userId = userService.getProfile(email).getId();
+        return ResponseEntity.ok(taxService.calculate(request, userId));
     }
 
-    @GetMapping("/{id}")
-    @Operation(summary = "Get a tax record by ID")
-    public ResponseEntity<TaxRecordDTO> findById(@PathVariable String id) {
-        return ResponseEntity.ok(taxService.findById(id));
-    }
-
-    @PostMapping
-    @Operation(summary = "Create a new tax record")
-    public ResponseEntity<TaxRecordDTO> create(@Valid @RequestBody CreateTaxRecordRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(taxService.create(request));
-    }
-
-    @PatchMapping("/{id}/status")
-    @Operation(summary = "Update the status of a tax record")
-    public ResponseEntity<TaxRecordDTO> updateStatus(
-            @PathVariable String id,
-            @RequestParam TaxStatus status) {
-        return ResponseEntity.ok(taxService.updateStatus(id, status));
+    @GetMapping("/history/{userId}")
+    @Operation(summary = "Retrieve past tax calculations for a user")
+    public ResponseEntity<List<TaxRecordDTO>> getHistory(@PathVariable String userId) {
+        return ResponseEntity.ok(taxService.getHistory(userId));
     }
 }

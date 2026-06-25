@@ -25,53 +25,68 @@ public class TaxService {
     private final NewRegimeCalculator newRegimeCalculator;
     private final TaxRecordRepository taxRecordRepository;
 
+    /** Calculates both regimes, persists a TaxRecord, and returns the full response. */
     @Transactional
     public TaxCalculationResponse calculate(TaxCalculationRequest request, String userId) {
         OldRegimeResult oldResult = oldRegimeCalculator.calculate(request);
         NewRegimeResult newResult = newRegimeCalculator.calculate(request.getGrossSalary());
-
-        Regime recommended = oldResult.taxAmount().compareTo(newResult.taxAmount()) <= 0
-                ? Regime.OLD : Regime.NEW;
-
-        BigDecimal savings = oldResult.taxAmount().subtract(newResult.taxAmount())
-                .abs().setScale(2, RoundingMode.HALF_UP);
+        TaxCalculationResponse response = buildResponse(request.getGrossSalary(), oldResult, newResult);
 
         TaxRecord record = TaxRecord.builder()
                 .userId(userId)
                 .grossSalary(request.getGrossSalary())
-                .regimeChosen(recommended)
-                .taxOldRegime(oldResult.taxAmount())
-                .taxNewRegime(newResult.taxAmount())
-                .recommendedRegime(recommended)
-                .savings(savings)
+                .regimeChosen(response.getRecommendedRegime())
+                .taxOldRegime(response.getTaxOldRegime())
+                .taxNewRegime(response.getTaxNewRegime())
+                .recommendedRegime(response.getRecommendedRegime())
+                .savings(response.getSavings())
                 .build();
         taxRecordRepository.save(record);
 
-        TaxCalculationResponse.DeductionBreakdown breakdown = TaxCalculationResponse.DeductionBreakdown.builder()
-                .standardDeductionOld(oldResult.standardDeduction())
-                .hraExemption(oldResult.hraExemption())
-                .deduction80C(oldResult.deduction80C())
-                .deduction80D(oldResult.deduction80D())
-                .homeLoanInterestSec24(oldResult.homeLoanInterest())
-                .totalOldRegimeDeductions(oldResult.totalDeductions())
-                .taxableIncomeOldRegime(oldResult.taxableIncome())
-                .standardDeductionNew(newResult.standardDeduction())
-                .taxableIncomeNewRegime(newResult.taxableIncome())
-                .build();
+        return response;
+    }
 
-        return TaxCalculationResponse.builder()
-                .taxOldRegime(oldResult.taxAmount())
-                .taxNewRegime(newResult.taxAmount())
-                .recommendedRegime(recommended)
-                .savings(savings)
-                .deductions(breakdown)
-                .build();
+    /** Calculates both regimes without persisting — used by the Insight endpoint. */
+    public TaxCalculationResponse calculateOnly(TaxCalculationRequest request) {
+        OldRegimeResult oldResult = oldRegimeCalculator.calculate(request);
+        NewRegimeResult newResult = newRegimeCalculator.calculate(request.getGrossSalary());
+        return buildResponse(request.getGrossSalary(), oldResult, newResult);
     }
 
     public List<TaxRecordDTO> getHistory(String userId) {
         return taxRecordRepository.findByUserId(userId).stream()
                 .map(this::toDTO)
                 .toList();
+    }
+
+    private TaxCalculationResponse buildResponse(BigDecimal grossSalary,
+                                                 OldRegimeResult old,
+                                                 NewRegimeResult newR) {
+        Regime recommended = old.taxAmount().compareTo(newR.taxAmount()) <= 0
+                ? Regime.OLD : Regime.NEW;
+        BigDecimal savings = old.taxAmount().subtract(newR.taxAmount())
+                .abs().setScale(2, RoundingMode.HALF_UP);
+
+        TaxCalculationResponse.DeductionBreakdown breakdown = TaxCalculationResponse.DeductionBreakdown.builder()
+                .standardDeductionOld(old.standardDeduction())
+                .hraExemption(old.hraExemption())
+                .deduction80C(old.deduction80C())
+                .deduction80D(old.deduction80D())
+                .homeLoanInterestSec24(old.homeLoanInterest())
+                .totalOldRegimeDeductions(old.totalDeductions())
+                .taxableIncomeOldRegime(old.taxableIncome())
+                .standardDeductionNew(newR.standardDeduction())
+                .taxableIncomeNewRegime(newR.taxableIncome())
+                .build();
+
+        return TaxCalculationResponse.builder()
+                .grossSalary(grossSalary)
+                .taxOldRegime(old.taxAmount())
+                .taxNewRegime(newR.taxAmount())
+                .recommendedRegime(recommended)
+                .savings(savings)
+                .deductions(breakdown)
+                .build();
     }
 
     private TaxRecordDTO toDTO(TaxRecord r) {

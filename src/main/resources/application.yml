@@ -65,6 +65,11 @@ taxease:
     secret: ${JWT_SECRET:dGF4ZWFzZS1zdXBlci1zZWNyZXQta2V5LWZvci1qd3Q=}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}   # 24 hours
 
+gemini:
+  api:
+    key: ${GEMINI_API_KEY}
+    url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+
 logging:
   level:
     com.taxease: DEBUG

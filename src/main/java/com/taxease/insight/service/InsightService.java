@@ -1,10 +1,14 @@
 package com.taxease.insight.service;
 
+import com.taxease.insight.dto.InsightResponse;
 import com.taxease.insight.dto.TaxInsightDTO;
+import com.taxease.tax.dto.TaxCalculationResponse;
+import com.taxease.tax.dto.TaxCalculationResponse.DeductionBreakdown;
 import com.taxease.tax.model.TaxRecord;
 import com.taxease.tax.model.enums.Regime;
 import com.taxease.tax.repository.TaxRecordRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
@@ -16,9 +20,116 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class InsightService {
 
+    private final GeminiClient geminiClient;
     private final TaxRecordRepository taxRecordRepository;
+
+    /**
+     * Builds a detailed prompt from the tax calculation result, calls Gemini for
+     * personalised tips, and falls back to static advice if the API is unavailable.
+     */
+    public InsightResponse getTaxSavingTips(TaxCalculationResponse calc) {
+        String tips;
+        try {
+            tips = geminiClient.generate(buildPrompt(calc));
+        } catch (Exception e) {
+            log.warn("Gemini API unavailable, using fallback tips: {}", e.getMessage());
+            tips = fallbackTips(calc);
+        }
+
+        return InsightResponse.builder()
+                .tips(tips)
+                .recommendedRegime(calc.getRecommendedRegime())
+                .savings(calc.getSavings())
+                .taxOldRegime(calc.getTaxOldRegime())
+                .taxNewRegime(calc.getTaxNewRegime())
+                .build();
+    }
+
+    private String buildPrompt(TaxCalculationResponse calc) {
+        DeductionBreakdown d = calc.getDeductions();
+        return """
+                You are a certified Indian tax advisor for FY 2025-26. A salaried employee has the following tax profile:
+
+                Gross Salary: ₹%s
+
+                OLD REGIME:
+                  Standard Deduction : ₹%s
+                  HRA Exemption      : ₹%s
+                  Section 80C        : ₹%s (limit ₹1,50,000)
+                  Section 80D        : ₹%s (limit ₹50,000)
+                  Home Loan Sec 24(b): ₹%s (limit ₹2,00,000)
+                  Total Deductions   : ₹%s
+                  Taxable Income     : ₹%s
+                  Tax Payable        : ₹%s
+
+                NEW REGIME:
+                  Standard Deduction : ₹%s
+                  Taxable Income     : ₹%s
+                  Tax Payable        : ₹%s
+
+                RECOMMENDED REGIME: %s — saves ₹%s compared to the other regime.
+
+                Give 3-4 personalised, actionable Indian tax-saving tips for this specific user in plain English. \
+                Focus on concrete steps they can take to reduce their tax bill further in FY 2025-26. \
+                Be specific to their income level and highlight any unused deduction headroom."""
+                .formatted(
+                        fmt(calc.getGrossSalary()),
+                        fmt(d.getStandardDeductionOld()),
+                        fmt(d.getHraExemption()),
+                        fmt(d.getDeduction80C()),
+                        fmt(d.getDeduction80D()),
+                        fmt(d.getHomeLoanInterestSec24()),
+                        fmt(d.getTotalOldRegimeDeductions()),
+                        fmt(d.getTaxableIncomeOldRegime()),
+                        fmt(calc.getTaxOldRegime()),
+                        fmt(d.getStandardDeductionNew()),
+                        fmt(d.getTaxableIncomeNewRegime()),
+                        fmt(calc.getTaxNewRegime()),
+                        calc.getRecommendedRegime().name(),
+                        fmt(calc.getSavings())
+                );
+    }
+
+    private String fallbackTips(TaxCalculationResponse calc) {
+        DeductionBreakdown d = calc.getDeductions();
+        List<String> tips = new ArrayList<>();
+
+        tips.add("Switch to the " + calc.getRecommendedRegime().name()
+                + " regime to save ₹" + fmt(calc.getSavings()) + " in taxes this year.");
+
+        BigDecimal unused80C = BigDecimal.valueOf(150_000).subtract(d.getDeduction80C());
+        if (unused80C.compareTo(BigDecimal.ZERO) > 0) {
+            tips.add("You have ₹" + fmt(unused80C)
+                    + " of unused Section 80C headroom. Consider investing in PPF, ELSS mutual funds,"
+                    + " or increasing your EPF voluntary contribution.");
+        }
+
+        BigDecimal unused80D = BigDecimal.valueOf(50_000).subtract(d.getDeduction80D());
+        if (unused80D.compareTo(BigDecimal.ZERO) > 0) {
+            tips.add("You have ₹" + fmt(unused80D)
+                    + " of unused Section 80D headroom. A health insurance policy for yourself"
+                    + " or parents can bring this benefit.");
+        }
+
+        if (d.getHraExemption().compareTo(BigDecimal.ZERO) == 0) {
+            tips.add("If you pay rent, ensure your employer includes HRA in your salary structure."
+                    + " The HRA exemption under the old regime can significantly reduce your taxable income.");
+        }
+
+        tips.add("Consider NPS contributions under Section 80CCD(1B) for an additional ₹50,000 deduction"
+                + " over and above the 80C limit, available under the old regime.");
+
+        return String.join("\n\n", tips);
+    }
+
+    private String fmt(BigDecimal value) {
+        return value == null ? "0" : value.setScale(0, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    // ── Legacy endpoint (history-based insights) ─────────────────────────────
 
     @Cacheable(value = "insights", key = "#userId + ':' + #taxYear")
     public TaxInsightDTO generateInsights(String userId, Integer taxYear) {
@@ -45,19 +156,15 @@ public class InsightService {
                 .effectiveTaxRate(effectiveTaxRate)
                 .estimatedRefund(BigDecimal.ZERO)
                 .potentialSavings(record.getSavings())
-                .recommendations(buildRecommendations(record))
+                .recommendations(buildLegacyRecommendations(record))
                 .build();
     }
 
-    private List<String> buildRecommendations(TaxRecord record) {
+    private List<String> buildLegacyRecommendations(TaxRecord record) {
         List<String> recs = new ArrayList<>();
         recs.add("Recommended regime: " + record.getRecommendedRegime().name()
-                + " — you save ₹" + record.getSavings().toPlainString() + " vs the other regime.");
-        if (record.getSavings().compareTo(BigDecimal.ZERO) > 0) {
-            recs.add("File under the " + record.getRecommendedRegime().name()
-                    + " regime to minimise your tax outflow.");
-        }
-        recs.add("Maximise Section 80C investments (PPF, ELSS, EPF) up to ₹1,50,000 under the old regime.");
+                + " — saves ₹" + record.getSavings().toPlainString() + " vs the other regime.");
+        recs.add("Maximise Section 80C investments (PPF, ELSS, EPF) up to ₹1,50,000.");
         recs.add("Health insurance premiums qualify under Section 80D up to ₹50,000.");
         recs.add("Home loan interest up to ₹2,00,000 is deductible under Section 24(b) in the old regime.");
         return recs;

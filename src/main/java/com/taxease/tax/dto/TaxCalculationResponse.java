@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class TaxCalculationResponse {
 
+    private BigDecimal grossSalary;
     private BigDecimal taxOldRegime;
     private BigDecimal taxNewRegime;
     private Regime recommendedRegime;

@@ -1,5 +1,7 @@
 package com.taxease.tax.service;
 
+import com.taxease.kafka.event.TaxEvent;
+import com.taxease.kafka.producer.TaxEventProducer;
 import com.taxease.tax.dto.TaxCalculationRequest;
 import com.taxease.tax.dto.TaxCalculationResponse;
 import com.taxease.tax.dto.TaxRecordDTO;
@@ -9,13 +11,17 @@ import com.taxease.tax.repository.TaxRecordRepository;
 import com.taxease.tax.service.NewRegimeCalculator.NewRegimeResult;
 import com.taxease.tax.service.OldRegimeCalculator.OldRegimeResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -24,6 +30,7 @@ public class TaxService {
     private final OldRegimeCalculator oldRegimeCalculator;
     private final NewRegimeCalculator newRegimeCalculator;
     private final TaxRecordRepository taxRecordRepository;
+    private final TaxEventProducer taxEventProducer;
 
     /** Calculates both regimes, persists a TaxRecord, and returns the full response. */
     @Transactional
@@ -42,6 +49,22 @@ public class TaxService {
                 .savings(response.getSavings())
                 .build();
         taxRecordRepository.save(record);
+
+        try {
+            TaxEvent event = TaxEvent.builder()
+                    .eventId(UUID.randomUUID().toString())
+                    .eventType(TaxEvent.EventType.TAX_RECORD_CREATED)
+                    .taxRecordId(record.getId())
+                    .userId(userId)
+                    .grossSalary(record.getGrossSalary())
+                    .recommendedRegime(record.getRecommendedRegime())
+                    .savings(record.getSavings())
+                    .occurredAt(LocalDateTime.now())
+                    .build();
+            taxEventProducer.publish(event);
+        } catch (Exception e) {
+            log.warn("Failed to publish TAX_RECORD_CREATED for record {}: {}", record.getId(), e.getMessage());
+        }
 
         return response;
     }

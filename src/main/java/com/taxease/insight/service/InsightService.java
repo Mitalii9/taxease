@@ -2,6 +2,7 @@ package com.taxease.insight.service;
 
 import com.taxease.insight.dto.InsightResponse;
 import com.taxease.insight.dto.TaxInsightDTO;
+import com.taxease.tax.dto.TaxCalculationRequest;
 import com.taxease.tax.dto.TaxCalculationResponse;
 import com.taxease.tax.dto.TaxCalculationResponse.DeductionBreakdown;
 import com.taxease.tax.model.TaxRecord;
@@ -10,10 +11,12 @@ import com.taxease.tax.repository.TaxRecordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -25,12 +28,30 @@ public class InsightService {
 
     private final GeminiClient geminiClient;
     private final TaxRecordRepository taxRecordRepository;
+    private final StringRedisTemplate stringRedisTemplate;
 
     /**
-     * Builds a detailed prompt from the tax calculation result, calls Gemini for
-     * personalised tips, and falls back to static advice if the API is unavailable.
+     * Cache-aside: checks Redis before calling Gemini. Redis failures are non-fatal —
+     * a warning is logged and the request falls through to Gemini as normal.
      */
-    public InsightResponse getTaxSavingTips(TaxCalculationResponse calc) {
+    public InsightResponse getTaxSavingTips(TaxCalculationRequest request,
+                                            TaxCalculationResponse calc,
+                                            String userId) {
+        String cacheKey = buildInsightCacheKey(userId, request);
+
+        // ── Cache read ────────────────────────────────────────────────────────
+        try {
+            String cached = stringRedisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                log.info(">>> REDIS CACHE HIT for key {}", cacheKey);
+                return buildInsightResponse(cached, calc);
+            }
+            log.info(">>> REDIS CACHE MISS - calling Gemini for key {}", cacheKey);
+        } catch (Exception e) {
+            log.warn("Redis read failed, falling through to Gemini: {}", e.getMessage());
+        }
+
+        // ── Gemini call ───────────────────────────────────────────────────────
         String tips;
         try {
             tips = geminiClient.generate(buildPrompt(calc));
@@ -39,6 +60,29 @@ public class InsightService {
             tips = fallbackTips(calc);
         }
 
+        // ── Cache write (best-effort, 1 h TTL) ───────────────────────────────
+        try {
+            stringRedisTemplate.opsForValue().set(cacheKey, tips, Duration.ofHours(1));
+        } catch (Exception e) {
+            log.warn("Redis write failed, response will not be cached: {}", e.getMessage());
+        }
+
+        return buildInsightResponse(tips, calc);
+    }
+
+    private String buildInsightCacheKey(String userId, TaxCalculationRequest request) {
+        return String.format("insights:%s:%s:%s:%s:%s:%s:%s:%s",
+                userId,
+                request.getGrossSalary().toPlainString(),
+                request.getInvestment80C().toPlainString(),
+                request.getMedical80D().toPlainString(),
+                request.getHomeLoanInterest().toPlainString(),
+                request.getHraReceived().toPlainString(),
+                request.getRentPaid().toPlainString(),
+                request.isMetroCity());
+    }
+
+    private InsightResponse buildInsightResponse(String tips, TaxCalculationResponse calc) {
         return InsightResponse.builder()
                 .tips(tips)
                 .recommendedRegime(calc.getRecommendedRegime())

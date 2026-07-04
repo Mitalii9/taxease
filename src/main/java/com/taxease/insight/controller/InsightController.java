@@ -33,7 +33,7 @@ public class InsightController {
         userService.getProfile(email); // validates the token maps to a real user
 
         TaxCalculationResponse calc = taxService.calculateOnly(request);
-        return ResponseEntity.ok(insightService.getTaxSavingTips(calc));
+        return ResponseEntity.ok(insightService.getTaxSavingTips(request, calc, email));
     }
 
     @GetMapping("/{userId}/{taxYear}")
